@@ -207,6 +207,21 @@
             font-size: 1.1em;
         }
 
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(255,255,255,.3);
+            border-radius: 50%;
+            border-top-color: #fff;
+            animation: spin 1s ease-in-out infinite;
+            margin-right: 10px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
         @media (max-width: 600px) {
             .container {
                 width: 95%;
@@ -248,6 +263,9 @@
                 <button onclick="joinLobby()">Join Lobby</button>
                 <button onclick="createLobby()">Create New Lobby</button>
                 <div id="lobbyStatus" class="status-message" style="display: none;"></div>
+                <div id="firebaseStatus" class="status-message" style="background: rgba(255, 193, 7, 0.3);">
+                    <div class="loading"></div>Connecting to Firebase...
+                </div>
             </div>
 
             <!-- Category Selection Screen -->
@@ -293,8 +311,45 @@
         </div>
     </div>
 
+    <!-- Firebase SDKs -->
+    <script type="module">
+        // Import Firebase modules
+        import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.0/firebase-app.js';
+        import { getDatabase, ref, set, get, onValue, push, remove, update, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.7.0/firebase-database.js';
+
+        // TODO: Replace with your Firebase config
+        const firebaseConfig = {
+            apiKey: "your-api-key",
+            authDomain: "your-project.firebaseapp.com",
+            databaseURL: "https://your-project-default-rtdb.firebaseio.com",
+            projectId: "your-project-id",
+            storageBucket: "your-project.appspot.com",
+            messagingSenderId: "123456789",
+            appId: "your-app-id"
+        };
+
+        // Initialize Firebase
+        let app, database;
+        
+        try {
+            app = initializeApp(firebaseConfig);
+            database = getDatabase(app);
+            document.getElementById('firebaseStatus').innerHTML = '✅ Connected to Firebase';
+            setTimeout(() => {
+                document.getElementById('firebaseStatus').style.display = 'none';
+            }, 3000);
+        } catch (error) {
+            console.error('Firebase initialization error:', error);
+            document.getElementById('firebaseStatus').innerHTML = '❌ Firebase connection failed. Using offline mode.';
+            document.getElementById('firebaseStatus').style.background = 'rgba(244, 67, 54, 0.3)';
+        }
+
+        // Make Firebase functions available globally
+        window.firebase = { database, ref, set, get, onValue, push, remove, update, serverTimestamp };
+    </script>
+
     <script>
-        // Game Database
+        // Game Database (same as before)
         const gameDatabase = {
             worldSports: [
                 {
@@ -587,18 +642,19 @@
         let gameState = {
             currentScreen: 'lobby',
             playerName: '',
+            playerId: '',
             lobbyCode: '',
             isLeader: false,
-            players: [],
+            currentLobby: null,
             currentCategory: '',
             currentRound: 1,
             currentQuestion: null,
             currentClues: [],
             timer: 10,
             currentPoints: 60,
-            scores: {},
-            playersReady: [],
-            gameQuestions: []
+            gameQuestions: [],
+            lobbyListener: null,
+            gameListener: null
         };
 
         let timerInterval;
@@ -606,11 +662,11 @@
         // Initialize game
         function initGame() {
             showScreen('lobby');
-            // Simulate multiplayer for demo
-            gameState.players = [
-                { name: 'Player1', score: 0, ready: false },
-                { name: 'Player2', score: 0, ready: false }
-            ];
+            gameState.playerId = generatePlayerId();
+        }
+
+        function generatePlayerId() {
+            return 'player_' + Math.random().toString(36).substring(2, 15);
         }
 
         function showScreen(screenName) {
@@ -621,34 +677,7 @@
             gameState.currentScreen = screenName;
         }
 
-        function joinLobby() {
-            const playerName = document.getElementById('playerName').value.trim();
-            const lobbyCode = document.getElementById('lobbyCode').value.trim();
-            
-            if (!playerName) {
-                alert('Please enter your name');
-                return;
-            }
-
-            gameState.playerName = playerName;
-            gameState.lobbyCode = lobbyCode || generateLobbyCode();
-            gameState.isLeader = !lobbyCode; // If no code provided, user is creating lobby
-
-            document.getElementById('lobbyStatus').style.display = 'block';
-            document.getElementById('lobbyStatus').textContent = `Joined lobby: ${gameState.lobbyCode}`;
-
-            // Add current player to players list
-            if (!gameState.players.find(p => p.name === playerName)) {
-                gameState.players.push({ name: playerName, score: 0, ready: false });
-            }
-
-            setTimeout(() => {
-                showScreen('category');
-                updatePlayersDisplay();
-            }, 1500);
-        }
-
-        function createLobby() {
+        async function createLobby() {
             const playerName = document.getElementById('playerName').value.trim();
             
             if (!playerName) {
@@ -656,257 +685,215 @@
                 return;
             }
 
-            gameState.playerName = playerName;
-            gameState.lobbyCode = generateLobbyCode();
-            gameState.isLeader = true;
+            if (!window.firebase || !window.firebase.database) {
+                // Fallback to offline mode
+                createOfflineLobby(playerName);
+                return;
+            }
 
-            document.getElementById('lobbyStatus').style.display = 'block';
-            document.getElementById('lobbyStatus').textContent = `Created lobby: ${gameState.lobbyCode}`;
+            try {
+                gameState.playerName = playerName;
+                gameState.lobbyCode = generateLobbyCode();
+                gameState.isLeader = true;
 
-            // Add current player as leader
-            gameState.players = [{ name: playerName, score: 0, ready: false, isLeader: true }];
+                const lobbyRef = window.firebase.ref(window.firebase.database, `lobbies/${gameState.lobbyCode}`);
+                
+                const lobbyData = {
+                    code: gameState.lobbyCode,
+                    leader: gameState.playerId,
+                    createdAt: window.firebase.serverTimestamp(),
+                    status: 'waiting', // waiting, playing, finished
+                    category: null,
+                    currentRound: 0,
+                    gameQuestions: [],
+                    players: {
+                        [gameState.playerId]: {
+                            name: playerName,
+                            score: 0,
+                            ready: false,
+                            isLeader: true,
+                            joinedAt: window.firebase.serverTimestamp()
+                        }
+                    }
+                };
 
-            setTimeout(() => {
-                showScreen('category');
-                updatePlayersDisplay();
-            }, 1500);
+                await window.firebase.set(lobbyRef, lobbyData);
+
+                document.getElementById('lobbyStatus').style.display = 'block';
+                document.getElementById('lobbyStatus').innerHTML = `✅ Created lobby: <strong>${gameState.lobbyCode}</strong>`;
+
+                setTimeout(() => {
+                    showScreen('category');
+                    listenToLobby();
+                }, 1500);
+
+            } catch (error) {
+                console.error('Error creating lobby:', error);
+                document.getElementById('lobbyStatus').style.display = 'block';
+                document.getElementById('lobbyStatus').innerHTML = '❌ Failed to create lobby. Try again.';
+            }
         }
 
-        function generateLobbyCode() {
-            return Math.random().toString(36).substring(2, 8).toUpperCase();
+        async function joinLobby() {
+            const playerName = document.getElementById('playerName').value.trim();
+            const lobbyCode = document.getElementById('lobbyCode').value.trim().toUpperCase();
+            
+            if (!playerName) {
+                alert('Please enter your name');
+                return;
+            }
+
+            if (!lobbyCode) {
+                alert('Please enter a lobby code');
+                return;
+            }
+
+            if (!window.firebase || !window.firebase.database) {
+                // Fallback to offline mode
+                joinOfflineLobby(playerName, lobbyCode);
+                return;
+            }
+
+            try {
+                gameState.playerName = playerName;
+                gameState.lobbyCode = lobbyCode;
+                gameState.isLeader = false;
+
+                const lobbyRef = window.firebase.ref(window.firebase.database, `lobbies/${lobbyCode}`);
+                const lobbySnapshot = await window.firebase.get(lobbyRef);
+
+                if (!lobbySnapshot.exists()) {
+                    document.getElementById('lobbyStatus').style.display = 'block';
+                    document.getElementById('lobbyStatus').innerHTML = '❌ Lobby not found. Check the code.';
+                    return;
+                }
+
+                const lobbyData = lobbySnapshot.val();
+                
+                if (lobbyData.status !== 'waiting') {
+                    document.getElementById('lobbyStatus').style.display = 'block';
+                    document.getElementById('lobbyStatus').innerHTML = '❌ Game already in progress.';
+                    return;
+                }
+
+                // Add player to lobby
+                const playerRef = window.firebase.ref(window.firebase.database, `lobbies/${lobbyCode}/players/${gameState.playerId}`);
+                await window.firebase.set(playerRef, {
+                    name: playerName,
+                    score: 0,
+                    ready: false,
+                    isLeader: false,
+                    joinedAt: window.firebase.serverTimestamp()
+                });
+
+                document.getElementById('lobbyStatus').style.display = 'block';
+                document.getElementById('lobbyStatus').innerHTML = `✅ Joined lobby: <strong>${lobbyCode}</strong>`;
+
+                setTimeout(() => {
+                    showScreen('category');
+                    listenToLobby();
+                }, 1500);
+
+            } catch (error) {
+                console.error('Error joining lobby:', error);
+                document.getElementById('lobbyStatus').style.display = 'block';
+                document.getElementById('lobbyStatus').innerHTML = '❌ Failed to join lobby. Try again.';
+            }
+        }
+
+        function listenToLobby() {
+            if (!window.firebase || !window.firebase.database) return;
+
+            const lobbyRef = window.firebase.ref(window.firebase.database, `lobbies/${gameState.lobbyCode}`);
+            
+            gameState.lobbyListener = window.firebase.onValue(lobbyRef, (snapshot) => {
+                if (snapshot.exists()) {
+                    const lobbyData = snapshot.val();
+                    gameState.currentLobby = lobbyData;
+                    updatePlayersDisplay();
+                    
+                    // Check if game should start
+                    if (lobbyData.status === 'playing' && gameState.currentScreen === 'category') {
+                        startGameFromLobby(lobbyData);
+                    }
+                }
+            });
         }
 
         function updatePlayersDisplay() {
+            if (!gameState.currentLobby) return;
+
+            const players = gameState.currentLobby.players || {};
+            const playerList = Object.entries(players).map(([id, player]) => player);
+
             const container = document.getElementById('playersInLobby');
             container.innerHTML = `
                 <h3>Players in Lobby: ${gameState.lobbyCode}</h3>
-                ${gameState.players.map(player => `
+                ${playerList.map(player => `
                     <div class="player-item">
-                        <span>${player.name} ${player.isLeader ? '(Leader)' : ''}</span>
-                        <span>Score: ${player.score}</span>
+                        <span>${player.name} ${player.isLeader ? '👑' : ''}</span>
+                        <span>Score: ${player.score || 0}</span>
                     </div>
                 `).join('')}
+                <p style="margin-top: 15px; opacity: 0.8;">${playerList.length} player(s) connected</p>
             `;
         }
 
-        function selectCategory(category) {
+        async function selectCategory(category) {
             if (!gameState.isLeader) {
                 document.getElementById('categoryStatus').style.display = 'block';
                 document.getElementById('categoryStatus').textContent = 'Only the party leader can select the category.';
                 return;
             }
 
-            gameState.currentCategory = category;
-            generateGameQuestions();
-            
-            document.getElementById('categoryStatus').style.display = 'block';
-            document.getElementById('categoryStatus').textContent = `Selected: ${getCategoryName(category)}`;
+            if (!window.firebase || !window.firebase.database) {
+                // Offline mode
+                selectOfflineCategory(category);
+                return;
+            }
 
-            setTimeout(() => {
-                startGame();
-            }, 1500);
-        }
-
-        function getCategoryName(category) {
-            const names = {
-                worldSports: 'World Sports',
-                afl: 'AFL',
-                movieStars: 'Movie Stars',
-                musicians: 'Musicians',
-                famousFigures: 'Famous Figures',
-                randomMix: 'Random Mix'
-            };
-            return names[category] || category;
-        }
-
-        function generateGameQuestions() {
-            let sourceData = [];
-            
-            if (gameState.currentCategory === 'randomMix') {
-                // Combine all categories for random mix
-                Object.values(gameDatabase).forEach(category => {
-                    sourceData = sourceData.concat(category);
+            try {
+                const questions = generateGameQuestions(category);
+                
+                const lobbyRef = window.firebase.ref(window.firebase.database, `lobbies/${gameState.lobbyCode}`);
+                await window.firebase.update(lobbyRef, {
+                    category: category,
+                    status: 'playing',
+                    currentRound: 1,
+                    gameQuestions: questions,
+                    gameState: {
+                        currentQuestion: questions[0],
+                        currentClues: [],
+                        timer: 10,
+                        currentPoints: 60,
+                        startTime: window.firebase.serverTimestamp()
+                    }
                 });
-            } else {
-                sourceData = gameDatabase[gameState.currentCategory] || [];
-            }
 
-            // Shuffle and select 10 questions
-            gameState.gameQuestions = shuffleArray(sourceData).slice(0, 10);
+                document.getElementById('categoryStatus').style.display = 'block';
+                document.getElementById('categoryStatus').textContent = `Selected: ${getCategoryName(category)}`;
+
+            } catch (error) {
+                console.error('Error selecting category:', error);
+                document.getElementById('categoryStatus').style.display = 'block';
+                document.getElementById('categoryStatus').textContent = 'Error starting game. Try again.';
+            }
         }
 
-        function shuffleArray(array) {
-            const shuffled = [...array];
-            for (let i = shuffled.length - 1; i > 0; i--) {
-                const j = Math.floor(Math.random() * (i + 1));
-                [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-            }
-            return shuffled;
-        }
-
-        function startGame() {
-            gameState.currentRound = 1;
-            // Initialize scores
-            gameState.players.forEach(player => {
-                gameState.scores[player.name] = 0;
-            });
+        function startGameFromLobby(lobbyData) {
+            gameState.currentCategory = lobbyData.category;
+            gameState.gameQuestions = lobbyData.gameQuestions;
+            gameState.currentRound = lobbyData.currentRound;
             
             showScreen('game-play');
             startRound();
         }
 
-        function startRound() {
-            gameState.currentQuestion = gameState.gameQuestions[gameState.currentRound - 1];
-            gameState.currentClues = [];
-            gameState.timer = 10;
-            gameState.currentPoints = 60;
+        // Offline fallback functions
+        function createOfflineLobby(playerName) {
+            gameState.playerName = playerName;
+            gameState.lobbyCode = generateLobbyCode();
+            gameState.isLeader = true;
 
-            document.getElementById('roundInfo').textContent = `Round ${gameState.currentRound}/10`;
-            document.getElementById('initials').textContent = gameState.currentQuestion.initials;
-            document.getElementById('cluesContainer').innerHTML = '<p>No clues yet - guess for maximum points!</p>';
-            document.getElementById('guessInput').value = '';
-            document.getElementById('gameStatus').style.display = 'none';
-
-            updateTimer();
-            updatePoints();
-            startTimer();
-        }
-
-        function startTimer() {
-            clearInterval(timerInterval);
-            timerInterval = setInterval(() => {
-                gameState.timer--;
-                updateTimer();
-                
-                if (gameState.timer <= 0) {
-                    clearInterval(timerInterval);
-                    showNextClue();
-                }
-            }, 1000);
-        }
-
-        function updateTimer() {
-            document.getElementById('timer').textContent = gameState.timer;
-        }
-
-        function updatePoints() {
-            document.getElementById('points').textContent = `${gameState.currentPoints} pts`;
-        }
-
-        function showNextClue() {
-            if (gameState.currentClues.length < 5) {
-                // Get available clues
-                const availableClues = gameState.currentQuestion.clues.filter(clue => 
-                    !gameState.currentClues.includes(clue)
-                );
-                
-                if (availableClues.length > 0) {
-                    // Add random clue
-                    const randomClue = availableClues[Math.floor(Math.random() * availableClues.length)];
-                    gameState.currentClues.push(randomClue);
-                    
-                    // Update clues display
-                    document.getElementById('cluesContainer').innerHTML = 
-                        gameState.currentClues.map((clue, index) => 
-                            `<div class="clue">Clue ${index + 1}: ${clue}</div>`
-                        ).join('');
-                    
-                    // Reduce points
-                    gameState.currentPoints = Math.max(10, gameState.currentPoints - 10);
-                    updatePoints();
-                    
-                    // Restart timer
-                    gameState.timer = 10;
-                    startTimer();
-                }
-            } else {
-                // All clues shown, end round
-                endRound(false);
-            }
-        }
-
-        function submitGuess() {
-            const guess = document.getElementById('guessInput').value.trim().toLowerCase();
-            const correctAnswer = gameState.currentQuestion.answer.toLowerCase();
-            
-            if (!guess) {
-                alert('Please enter a guess');
-                return;
-            }
-
-            clearInterval(timerInterval);
-
-            if (guess === correctAnswer || 
-                guess.includes(correctAnswer.split(' ')[0]) && guess.includes(correctAnswer.split(' ')[1])) {
-                // Correct answer
-                gameState.scores[gameState.playerName] += gameState.currentPoints;
-                
-                document.getElementById('gameStatus').style.display = 'block';
-                document.getElementById('gameStatus').textContent = 
-                    `Correct! You earned ${gameState.currentPoints} points!`;
-                document.getElementById('gameStatus').style.background = 'rgba(76, 175, 80, 0.3)';
-                
-                setTimeout(() => endRound(true), 2000);
-            } else {
-                // Wrong answer
-                document.getElementById('gameStatus').style.display = 'block';
-                document.getElementById('gameStatus').textContent = 'Incorrect guess. Keep trying!';
-                document.getElementById('gameStatus').style.background = 'rgba(244, 67, 54, 0.3)';
-                
-                // Continue timer
-                setTimeout(() => {
-                    document.getElementById('gameStatus').style.display = 'none';
-                    if (gameState.currentClues.length < 5) {
-                        startTimer();
-                    }
-                }, 1500);
-            }
-        }
-
-        function endRound(correctGuess) {
-            clearInterval(timerInterval);
-            
-            // Update player scores
-            gameState.players.forEach(player => {
-                if (gameState.scores[player.name] !== undefined) {
-                    player.score = gameState.scores[player.name];
-                }
-            });
-
-            showScoreboard();
-        }
-
-        function showScoreboard() {
-            showScreen('scoreboard');
-            
-            document.getElementById('scoreboardRound').textContent = 
-                `Round ${gameState.currentRound} Complete`;
-            
-            // Sort players by score
-            const sortedPlayers = [...gameState.players].sort((a, b) => b.score - a.score);
-            
-            document.getElementById('scoreboard').innerHTML = sortedPlayers.map((player, index) => `
-                <div class="score-item">
-                    <span>#${index + 1} ${player.name}</span>
-                    <span>${player.score} pts</span>
-                </div>
-            `).join('');
-
-            document.getElementById('correctAnswer').textContent = 
-                `The answer was: ${gameState.currentQuestion.answer}`;
-
-            // Reset ready status
-            gameState.playersReady = [];
-            document.getElementById('readyStatus').style.display = 'none';
-            document.getElementById('readyBtn').disabled = false;
-        }
-
-        function markReady() {
-            if (!gameState.playersReady.includes(gameState.playerName)) {
-                gameState.playersReady.push(gameState.playerName);
-            }
-
-            document.getElementById('readyBtn').disabled = true;
-            document.getElementById('readyStatus').style.display = 'block';
-            document.getElementById('readyStatus').textContent = 
-                `${gameState.players
+            document.getElementById('lobbyStatus').style.display = 'block';
+            document.getElementById('
