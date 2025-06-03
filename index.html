@@ -1,48 +1,912 @@
-name: Deploy to AWS
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Initial Contact</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
 
-on:
-  push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
+        body {
+            font-family: 'Arial', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+        }
 
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v3
-    
-    - name: Configure AWS credentials
-      uses: aws-actions/configure-aws-credentials@v2
-      with:
-        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: ${{ secrets.AWS_REGION }}
-    
-    # Example: Deploy to S3 + CloudFront
-    - name: Deploy to S3
-      run: |
-        aws s3 sync . s3://your-bucket-name --exclude ".git/*" --exclude ".github/*"
-    
-    # Example: Invalidate CloudFront (optional)
-    - name: Invalidate CloudFront
-      run: |
-        aws cloudfront create-invalidation --distribution-id YOUR_DISTRIBUTION_ID --paths "/*"
-    
-    # Alternative: Deploy to Elastic Beanstalk
-    # - name: Deploy to Elastic Beanstalk
-    #   run: |
-    #     zip -r deploy.zip . -x "*.git*" "*.github*"
-    #     aws s3 cp deploy.zip s3://your-eb-bucket/deploy.zip
-    #     aws elasticbeanstalk create-application-version --application-name your-app --version-label ${{ github.sha }} --source-bundle S3Bucket=your-eb-bucket,S3Key=deploy.zip
-    #     aws elasticbeanstalk update-environment --application-name your-app --environment-name your-env --version-label ${{ github.sha }}
+        .container {
+            max-width: 800px;
+            width: 90%;
+            margin: 0 auto;
+            padding: 20px;
+        }
 
-    # Alternative: Deploy to EC2 (requires additional setup)
-    # - name: Deploy to EC2
-    #   run: |
-    #     echo "${{ secrets.EC2_SSH_KEY }}" > private_key.pem
-    #     chmod 600 private_key.pem
-    #     scp -o StrictHostKeyChecking=no -i private_key.pem -r . ec2-user@your-ec2-ip:/var/www/html/
-    #     ssh -o StrictHostKeyChecking=no -i private_key.pem ec2-user@your-ec2-ip 'sudo systemctl restart apache2'
+        .game-screen {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 30px;
+            text-align: center;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        h1 {
+            font-size: 2.5em;
+            margin-bottom: 30px;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+        }
+
+        .lobby-screen, .category-screen, .game-play-screen, .scoreboard-screen {
+            display: none;
+        }
+
+        .lobby-screen.active, .category-screen.active, .game-play-screen.active, .scoreboard-screen.active {
+            display: block;
+        }
+
+        .input-group {
+            margin: 20px 0;
+        }
+
+        input[type="text"] {
+            padding: 15px;
+            font-size: 1.2em;
+            border: none;
+            border-radius: 10px;
+            background: rgba(255, 255, 255, 0.9);
+            color: #333;
+            width: 100%;
+            max-width: 300px;
+            margin: 10px;
+        }
+
+        button {
+            padding: 15px 30px;
+            font-size: 1.1em;
+            border: none;
+            border-radius: 10px;
+            background: linear-gradient(45deg, #ff6b6b, #ff8e8e);
+            color: white;
+            cursor: pointer;
+            margin: 10px;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(255, 107, 107, 0.4);
+        }
+
+        button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .category-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin: 30px 0;
+        }
+
+        .category-btn {
+            padding: 20px;
+            background: rgba(255, 255, 255, 0.2);
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            color: white;
+            font-size: 1.1em;
+            border-radius: 15px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .category-btn:hover {
+            background: rgba(255, 255, 255, 0.3);
+            transform: scale(1.05);
+        }
+
+        .players-list {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+
+        .player-item {
+            padding: 10px;
+            margin: 5px 0;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .game-info {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+            flex-wrap: wrap;
+            gap: 20px;
+        }
+
+        .timer {
+            font-size: 3em;
+            font-weight: bold;
+            color: #ff6b6b;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
+        }
+
+        .points {
+            font-size: 2em;
+            color: #4ecdc4;
+            font-weight: bold;
+        }
+
+        .initials {
+            font-size: 4em;
+            font-weight: bold;
+            letter-spacing: 0.2em;
+            margin: 30px 0;
+            text-shadow: 3px 3px 6px rgba(0, 0, 0, 0.5);
+        }
+
+        .clues {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 15px;
+            padding: 20px;
+            margin: 20px 0;
+            min-height: 120px;
+        }
+
+        .clue {
+            font-size: 1.2em;
+            margin: 10px 0;
+            padding: 10px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+        }
+
+        .scoreboard {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 15px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+
+        .score-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 10px;
+            margin: 5px 0;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            font-size: 1.2em;
+        }
+
+        .round-info {
+            font-size: 1.5em;
+            margin-bottom: 20px;
+        }
+
+        .status-message {
+            margin: 20px 0;
+            padding: 15px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+            font-size: 1.1em;
+        }
+
+        @media (max-width: 600px) {
+            .container {
+                width: 95%;
+                padding: 10px;
+            }
+            
+            .game-screen {
+                padding: 20px;
+            }
+            
+            h1 {
+                font-size: 2em;
+            }
+            
+            .initials {
+                font-size: 3em;
+            }
+            
+            .timer {
+                font-size: 2.5em;
+            }
+            
+            .points {
+                font-size: 1.5em;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="game-screen">
+            <!-- Lobby Screen -->
+            <div class="lobby-screen active">
+                <h1>Initial Contact</h1>
+                <div class="input-group">
+                    <input type="text" id="playerName" placeholder="Enter your name" maxlength="20">
+                    <input type="text" id="lobbyCode" placeholder="Enter lobby code (optional)" maxlength="10">
+                </div>
+                <button onclick="joinLobby()">Join Lobby</button>
+                <button onclick="createLobby()">Create New Lobby</button>
+                <div id="lobbyStatus" class="status-message" style="display: none;"></div>
+            </div>
+
+            <!-- Category Selection Screen -->
+            <div class="category-screen">
+                <h1>Select Category</h1>
+                <div id="playersInLobby" class="players-list"></div>
+                <div class="category-grid">
+                    <button class="category-btn" onclick="selectCategory('worldSports')">World Sports</button>
+                    <button class="category-btn" onclick="selectCategory('afl')">AFL</button>
+                    <button class="category-btn" onclick="selectCategory('movieStars')">Movie Stars</button>
+                    <button class="category-btn" onclick="selectCategory('musicians')">Musicians</button>
+                    <button class="category-btn" onclick="selectCategory('famousFigures')">Famous Figures</button>
+                    <button class="category-btn" onclick="selectCategory('randomMix')">Random Mix</button>
+                </div>
+                <div id="categoryStatus" class="status-message" style="display: none;"></div>
+            </div>
+
+            <!-- Game Play Screen -->
+            <div class="game-play-screen">
+                <div class="game-info">
+                    <div class="timer" id="timer">10</div>
+                    <div class="points" id="points">60 pts</div>
+                    <div class="round-info" id="roundInfo">Round 1/10</div>
+                </div>
+                <div class="initials" id="initials">A.B.</div>
+                <div class="clues" id="cluesContainer"></div>
+                <div class="input-group">
+                    <input type="text" id="guessInput" placeholder="Enter your guess..." maxlength="50">
+                    <button onclick="submitGuess()">Submit Guess</button>
+                </div>
+                <div id="gameStatus" class="status-message" style="display: none;"></div>
+            </div>
+
+            <!-- Scoreboard Screen -->
+            <div class="scoreboard-screen">
+                <h1>Scoreboard</h1>
+                <div class="round-info" id="scoreboardRound">Round 1 Complete</div>
+                <div class="scoreboard" id="scoreboard"></div>
+                <div id="correctAnswer" class="status-message"></div>
+                <button id="readyBtn" onclick="markReady()">Ready for Next Round</button>
+                <div id="readyStatus" class="status-message" style="display: none;"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Game Database
+        const gameDatabase = {
+            worldSports: [
+                {
+                    initials: "L.M.",
+                    answer: "Lionel Messi",
+                    clues: [
+                        "Argentine footballer",
+                        "Plays for Inter Miami",
+                        "Won 8 Ballon d'Or awards",
+                        "Former Barcelona star",
+                        "Nicknamed 'The GOAT'"
+                    ]
+                },
+                {
+                    initials: "S.W.",
+                    answer: "Serena Williams",
+                    clues: [
+                        "American tennis player",
+                        "Won 23 Grand Slam singles titles",
+                        "Sister of Venus Williams",
+                        "Dominated women's tennis for decades",
+                        "Known for powerful serve"
+                    ]
+                },
+                {
+                    initials: "M.J.",
+                    answer: "Michael Jordan",
+                    clues: [
+                        "Basketball legend",
+                        "Played for Chicago Bulls",
+                        "Won 6 NBA championships",
+                        "Known as 'His Airness'",
+                        "Jersey number 23"
+                    ]
+                },
+                {
+                    initials: "U.B.",
+                    answer: "Usain Bolt",
+                    clues: [
+                        "Jamaican sprinter",
+                        "Fastest man alive",
+                        "Won 8 Olympic gold medals",
+                        "100m world record holder",
+                        "Lightning bolt celebration"
+                    ]
+                },
+                {
+                    initials: "T.B.",
+                    answer: "Tom Brady",
+                    clues: [
+                        "American football quarterback",
+                        "Won 7 Super Bowl titles",
+                        "Played for Patriots and Buccaneers",
+                        "Called the GOAT of NFL",
+                        "Married to Gisele Bundchen"
+                    ]
+                }
+            ],
+            afl: [
+                {
+                    initials: "D.M.",
+                    answer: "Dustin Martin",
+                    clues: [
+                        "Richmond Tigers player",
+                        "2017 Brownlow Medal winner",
+                        "Three-time premiership player",
+                        "Known for his fend-off move",
+                        "Nickname 'Dusty'"
+                    ]
+                },
+                {
+                    initials: "L.F.",
+                    answer: "Lance Franklin",
+                    clues: [
+                        "Sydney Swans forward",
+                        "Former Hawthorn player",
+                        "Kicked over 1000 career goals",
+                        "Nickname 'Buddy'",
+                        "Four-time premiership player"
+                    ]
+                },
+                {
+                    initials: "G.A.",
+                    answer: "Gary Ablett Jr",
+                    clues: [
+                        "Geelong Cats legend",
+                        "Two-time Brownlow Medal winner",
+                        "Son of Gary Ablett Sr",
+                        "Also played for Gold Coast Suns",
+                        "Known as 'Little Master'"
+                    ]
+                },
+                {
+                    initials: "N.R.",
+                    answer: "Nick Riewoldt",
+                    clues: [
+                        "St Kilda Saints captain",
+                        "Five-time All-Australian",
+                        "Kicked 718 career goals",
+                        "Known for his marking ability",
+                        "Played 336 games"
+                    ]
+                },
+                {
+                    initials: "M.V.",
+                    answer: "Max Verstappen",
+                    clues: [
+                        "Dutch Formula 1 driver",
+                        "Red Bull Racing driver",
+                        "Multiple world champion",
+                        "Son of Jos Verstappen",
+                        "Youngest F1 race winner"
+                    ]
+                }
+            ],
+            movieStars: [
+                {
+                    initials: "L.D.",
+                    answer: "Leonardo DiCaprio",
+                    clues: [
+                        "American actor",
+                        "Won Oscar for The Revenant",
+                        "Starred in Titanic",
+                        "Environmental activist",
+                        "Worked with Martin Scorsese"
+                    ]
+                },
+                {
+                    initials: "M.S.",
+                    answer: "Meryl Streep",
+                    clues: [
+                        "American actress",
+                        "Most Oscar-nominated actress",
+                        "Starred in The Devil Wears Prada",
+                        "Known for accents",
+                        "Three-time Academy Award winner"
+                    ]
+                },
+                {
+                    initials: "R.D.",
+                    answer: "Robert Downey Jr",
+                    clues: [
+                        "American actor",
+                        "Played Iron Man",
+                        "Part of Marvel Cinematic Universe",
+                        "Starred in Sherlock Holmes",
+                        "Had career comeback"
+                    ]
+                },
+                {
+                    initials: "S.J.",
+                    answer: "Scarlett Johansson",
+                    clues: [
+                        "American actress",
+                        "Played Black Widow",
+                        "Starred in Lost in Translation",
+                        "Voice of AI in Her",
+                        "Multiple Oscar nominations"
+                    ]
+                },
+                {
+                    initials: "W.S.",
+                    answer: "Will Smith",
+                    clues: [
+                        "American actor and rapper",
+                        "Starred in Independence Day",
+                        "Known as Fresh Prince",
+                        "Won Oscar for King Richard",
+                        "Married to Jada Pinkett Smith"
+                    ]
+                }
+            ],
+            musicians: [
+                {
+                    initials: "T.S.",
+                    answer: "Taylor Swift",
+                    clues: [
+                        "American singer-songwriter",
+                        "Multiple Grammy winner",
+                        "Known for country-to-pop transition",
+                        "Famous for re-recording albums",
+                        "Swifties fanbase"
+                    ]
+                },
+                {
+                    initials: "E.J.",
+                    answer: "Elton John",
+                    clues: [
+                        "British singer-songwriter",
+                        "Known for flamboyant costumes",
+                        "Sang Rocket Man",
+                        "Composed Lion King music",
+                        "Real name Reginald Dwight"
+                    ]
+                },
+                {
+                    initials: "B.S.",
+                    answer: "Bruce Springsteen",
+                    clues: [
+                        "American rock musician",
+                        "Known as 'The Boss'",
+                        "Born to Run album",
+                        "From New Jersey",
+                        "Working class anthems"
+                    ]
+                },
+                {
+                    initials: "A.G.",
+                    answer: "Ariana Grande",
+                    clues: [
+                        "American singer and actress",
+                        "Started on Nickelodeon",
+                        "Known for high vocal range",
+                        "Signature ponytail hairstyle",
+                        "Multiple Grammy winner"
+                    ]
+                },
+                {
+                    initials: "E.P.",
+                    answer: "Elvis Presley",
+                    clues: [
+                        "American singer and actor",
+                        "Known as King of Rock and Roll",
+                        "Famous for hip movements",
+                        "Lived at Graceland",
+                        "Died in 1977"
+                    ]
+                }
+            ],
+            famousFigures: [
+                {
+                    initials: "E.M.",
+                    answer: "Elon Musk",
+                    clues: [
+                        "CEO of Tesla and SpaceX",
+                        "South African-born entrepreneur",
+                        "Richest person in the world",
+                        "Founded PayPal",
+                        "Owns Twitter/X"
+                    ]
+                },
+                {
+                    initials: "O.W.",
+                    answer: "Oprah Winfrey",
+                    clues: [
+                        "American media mogul",
+                        "Famous talk show host",
+                        "First African American billionaire",
+                        "Known for book club",
+                        "Philanthropist"
+                    ]
+                },
+                {
+                    initials: "S.J.",
+                    answer: "Steve Jobs",
+                    clues: [
+                        "Co-founder of Apple",
+                        "Revolutionized personal computing",
+                        "Created the iPhone",
+                        "Known for keynote presentations",
+                        "Died in 2011"
+                    ]
+                },
+                {
+                    initials: "M.L.",
+                    answer: "Martin Luther King Jr",
+                    clues: [
+                        "Civil rights leader",
+                        "Famous 'I Have a Dream' speech",
+                        "Nobel Peace Prize winner",
+                        "Led Montgomery Bus Boycott",
+                        "Assassinated in 1968"
+                    ]
+                },
+                {
+                    initials: "N.M.",
+                    answer: "Nelson Mandela",
+                    clues: [
+                        "South African anti-apartheid leader",
+                        "First Black president of South Africa",
+                        "Spent 27 years in prison",
+                        "Nobel Peace Prize winner",
+                        "Known as Madiba"
+                    ]
+                }
+            ]
+        };
+
+        // Game State
+        let gameState = {
+            currentScreen: 'lobby',
+            playerName: '',
+            lobbyCode: '',
+            isLeader: false,
+            players: [],
+            currentCategory: '',
+            currentRound: 1,
+            currentQuestion: null,
+            currentClues: [],
+            timer: 10,
+            currentPoints: 60,
+            scores: {},
+            playersReady: [],
+            gameQuestions: []
+        };
+
+        let timerInterval;
+
+        // Initialize game
+        function initGame() {
+            showScreen('lobby');
+            // Simulate multiplayer for demo
+            gameState.players = [
+                { name: 'Player1', score: 0, ready: false },
+                { name: 'Player2', score: 0, ready: false }
+            ];
+        }
+
+        function showScreen(screenName) {
+            document.querySelectorAll('.lobby-screen, .category-screen, .game-play-screen, .scoreboard-screen').forEach(screen => {
+                screen.classList.remove('active');
+            });
+            document.querySelector(`.${screenName}-screen`).classList.add('active');
+            gameState.currentScreen = screenName;
+        }
+
+        function joinLobby() {
+            const playerName = document.getElementById('playerName').value.trim();
+            const lobbyCode = document.getElementById('lobbyCode').value.trim();
+            
+            if (!playerName) {
+                alert('Please enter your name');
+                return;
+            }
+
+            gameState.playerName = playerName;
+            gameState.lobbyCode = lobbyCode || generateLobbyCode();
+            gameState.isLeader = !lobbyCode; // If no code provided, user is creating lobby
+
+            document.getElementById('lobbyStatus').style.display = 'block';
+            document.getElementById('lobbyStatus').textContent = `Joined lobby: ${gameState.lobbyCode}`;
+
+            // Add current player to players list
+            if (!gameState.players.find(p => p.name === playerName)) {
+                gameState.players.push({ name: playerName, score: 0, ready: false });
+            }
+
+            setTimeout(() => {
+                showScreen('category');
+                updatePlayersDisplay();
+            }, 1500);
+        }
+
+        function createLobby() {
+            const playerName = document.getElementById('playerName').value.trim();
+            
+            if (!playerName) {
+                alert('Please enter your name');
+                return;
+            }
+
+            gameState.playerName = playerName;
+            gameState.lobbyCode = generateLobbyCode();
+            gameState.isLeader = true;
+
+            document.getElementById('lobbyStatus').style.display = 'block';
+            document.getElementById('lobbyStatus').textContent = `Created lobby: ${gameState.lobbyCode}`;
+
+            // Add current player as leader
+            gameState.players = [{ name: playerName, score: 0, ready: false, isLeader: true }];
+
+            setTimeout(() => {
+                showScreen('category');
+                updatePlayersDisplay();
+            }, 1500);
+        }
+
+        function generateLobbyCode() {
+            return Math.random().toString(36).substring(2, 8).toUpperCase();
+        }
+
+        function updatePlayersDisplay() {
+            const container = document.getElementById('playersInLobby');
+            container.innerHTML = `
+                <h3>Players in Lobby: ${gameState.lobbyCode}</h3>
+                ${gameState.players.map(player => `
+                    <div class="player-item">
+                        <span>${player.name} ${player.isLeader ? '(Leader)' : ''}</span>
+                        <span>Score: ${player.score}</span>
+                    </div>
+                `).join('')}
+            `;
+        }
+
+        function selectCategory(category) {
+            if (!gameState.isLeader) {
+                document.getElementById('categoryStatus').style.display = 'block';
+                document.getElementById('categoryStatus').textContent = 'Only the party leader can select the category.';
+                return;
+            }
+
+            gameState.currentCategory = category;
+            generateGameQuestions();
+            
+            document.getElementById('categoryStatus').style.display = 'block';
+            document.getElementById('categoryStatus').textContent = `Selected: ${getCategoryName(category)}`;
+
+            setTimeout(() => {
+                startGame();
+            }, 1500);
+        }
+
+        function getCategoryName(category) {
+            const names = {
+                worldSports: 'World Sports',
+                afl: 'AFL',
+                movieStars: 'Movie Stars',
+                musicians: 'Musicians',
+                famousFigures: 'Famous Figures',
+                randomMix: 'Random Mix'
+            };
+            return names[category] || category;
+        }
+
+        function generateGameQuestions() {
+            let sourceData = [];
+            
+            if (gameState.currentCategory === 'randomMix') {
+                // Combine all categories for random mix
+                Object.values(gameDatabase).forEach(category => {
+                    sourceData = sourceData.concat(category);
+                });
+            } else {
+                sourceData = gameDatabase[gameState.currentCategory] || [];
+            }
+
+            // Shuffle and select 10 questions
+            gameState.gameQuestions = shuffleArray(sourceData).slice(0, 10);
+        }
+
+        function shuffleArray(array) {
+            const shuffled = [...array];
+            for (let i = shuffled.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+            }
+            return shuffled;
+        }
+
+        function startGame() {
+            gameState.currentRound = 1;
+            // Initialize scores
+            gameState.players.forEach(player => {
+                gameState.scores[player.name] = 0;
+            });
+            
+            showScreen('game-play');
+            startRound();
+        }
+
+        function startRound() {
+            gameState.currentQuestion = gameState.gameQuestions[gameState.currentRound - 1];
+            gameState.currentClues = [];
+            gameState.timer = 10;
+            gameState.currentPoints = 60;
+
+            document.getElementById('roundInfo').textContent = `Round ${gameState.currentRound}/10`;
+            document.getElementById('initials').textContent = gameState.currentQuestion.initials;
+            document.getElementById('cluesContainer').innerHTML = '<p>No clues yet - guess for maximum points!</p>';
+            document.getElementById('guessInput').value = '';
+            document.getElementById('gameStatus').style.display = 'none';
+
+            updateTimer();
+            updatePoints();
+            startTimer();
+        }
+
+        function startTimer() {
+            clearInterval(timerInterval);
+            timerInterval = setInterval(() => {
+                gameState.timer--;
+                updateTimer();
+                
+                if (gameState.timer <= 0) {
+                    clearInterval(timerInterval);
+                    showNextClue();
+                }
+            }, 1000);
+        }
+
+        function updateTimer() {
+            document.getElementById('timer').textContent = gameState.timer;
+        }
+
+        function updatePoints() {
+            document.getElementById('points').textContent = `${gameState.currentPoints} pts`;
+        }
+
+        function showNextClue() {
+            if (gameState.currentClues.length < 5) {
+                // Get available clues
+                const availableClues = gameState.currentQuestion.clues.filter(clue => 
+                    !gameState.currentClues.includes(clue)
+                );
+                
+                if (availableClues.length > 0) {
+                    // Add random clue
+                    const randomClue = availableClues[Math.floor(Math.random() * availableClues.length)];
+                    gameState.currentClues.push(randomClue);
+                    
+                    // Update clues display
+                    document.getElementById('cluesContainer').innerHTML = 
+                        gameState.currentClues.map((clue, index) => 
+                            `<div class="clue">Clue ${index + 1}: ${clue}</div>`
+                        ).join('');
+                    
+                    // Reduce points
+                    gameState.currentPoints = Math.max(10, gameState.currentPoints - 10);
+                    updatePoints();
+                    
+                    // Restart timer
+                    gameState.timer = 10;
+                    startTimer();
+                }
+            } else {
+                // All clues shown, end round
+                endRound(false);
+            }
+        }
+
+        function submitGuess() {
+            const guess = document.getElementById('guessInput').value.trim().toLowerCase();
+            const correctAnswer = gameState.currentQuestion.answer.toLowerCase();
+            
+            if (!guess) {
+                alert('Please enter a guess');
+                return;
+            }
+
+            clearInterval(timerInterval);
+
+            if (guess === correctAnswer || 
+                guess.includes(correctAnswer.split(' ')[0]) && guess.includes(correctAnswer.split(' ')[1])) {
+                // Correct answer
+                gameState.scores[gameState.playerName] += gameState.currentPoints;
+                
+                document.getElementById('gameStatus').style.display = 'block';
+                document.getElementById('gameStatus').textContent = 
+                    `Correct! You earned ${gameState.currentPoints} points!`;
+                document.getElementById('gameStatus').style.background = 'rgba(76, 175, 80, 0.3)';
+                
+                setTimeout(() => endRound(true), 2000);
+            } else {
+                // Wrong answer
+                document.getElementById('gameStatus').style.display = 'block';
+                document.getElementById('gameStatus').textContent = 'Incorrect guess. Keep trying!';
+                document.getElementById('gameStatus').style.background = 'rgba(244, 67, 54, 0.3)';
+                
+                // Continue timer
+                setTimeout(() => {
+                    document.getElementById('gameStatus').style.display = 'none';
+                    if (gameState.currentClues.length < 5) {
+                        startTimer();
+                    }
+                }, 1500);
+            }
+        }
+
+        function endRound(correctGuess) {
+            clearInterval(timerInterval);
+            
+            // Update player scores
+            gameState.players.forEach(player => {
+                if (gameState.scores[player.name] !== undefined) {
+                    player.score = gameState.scores[player.name];
+                }
+            });
+
+            showScoreboard();
+        }
+
+        function showScoreboard() {
+            showScreen('scoreboard');
+            
+            document.getElementById('scoreboardRound').textContent = 
+                `Round ${gameState.currentRound} Complete`;
+            
+            // Sort players by score
+            const sortedPlayers = [...gameState.players].sort((a, b) => b.score - a.score);
+            
+            document.getElementById('scoreboard').innerHTML = sortedPlayers.map((player, index) => `
+                <div class="score-item">
+                    <span>#${index + 1} ${player.name}</span>
+                    <span>${player.score} pts</span>
+                </div>
+            `).join('');
+
+            document.getElementById('correctAnswer').textContent = 
+                `The answer was: ${gameState.currentQuestion.answer}`;
+
+            // Reset ready status
+            gameState.playersReady = [];
+            document.getElementById('readyStatus').style.display = 'none';
+            document.getElementById('readyBtn').disabled = false;
+        }
+
+        function markReady() {
+            if (!gameState.playersReady.includes(gameState.playerName)) {
+                gameState.playersReady.push(gameState.playerName);
+            }
+
+            document.getElementById('readyBtn').disabled = true;
+            document.getElementById('readyStatus').style.display = 'block';
+            document.getElementById('readyStatus').textContent = 
+                `${gameState.players
