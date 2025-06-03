@@ -1,0 +1,48 @@
+name: Deploy to AWS
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+    
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v2
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ secrets.AWS_REGION }}
+    
+    # Example: Deploy to S3 + CloudFront
+    - name: Deploy to S3
+      run: |
+        aws s3 sync . s3://your-bucket-name --exclude ".git/*" --exclude ".github/*"
+    
+    # Example: Invalidate CloudFront (optional)
+    - name: Invalidate CloudFront
+      run: |
+        aws cloudfront create-invalidation --distribution-id YOUR_DISTRIBUTION_ID --paths "/*"
+    
+    # Alternative: Deploy to Elastic Beanstalk
+    # - name: Deploy to Elastic Beanstalk
+    #   run: |
+    #     zip -r deploy.zip . -x "*.git*" "*.github*"
+    #     aws s3 cp deploy.zip s3://your-eb-bucket/deploy.zip
+    #     aws elasticbeanstalk create-application-version --application-name your-app --version-label ${{ github.sha }} --source-bundle S3Bucket=your-eb-bucket,S3Key=deploy.zip
+    #     aws elasticbeanstalk update-environment --application-name your-app --environment-name your-env --version-label ${{ github.sha }}
+
+    # Alternative: Deploy to EC2 (requires additional setup)
+    # - name: Deploy to EC2
+    #   run: |
+    #     echo "${{ secrets.EC2_SSH_KEY }}" > private_key.pem
+    #     chmod 600 private_key.pem
+    #     scp -o StrictHostKeyChecking=no -i private_key.pem -r . ec2-user@your-ec2-ip:/var/www/html/
+    #     ssh -o StrictHostKeyChecking=no -i private_key.pem ec2-user@your-ec2-ip 'sudo systemctl restart apache2'
